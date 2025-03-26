@@ -3,12 +3,13 @@ use std::ops::Mul;
 use sha2::{Digest, Sha256};
 
 use offline_finding::{
+    accessory::Accessory,
     p224::{
         elliptic_curve::ScalarPrimitive,
         elliptic_curve::{group::GroupEncoding, rand_core::CryptoRngCore},
         PublicKey, Scalar, SecretKey,
     },
-    Accessory, BleAdvertisementMetadata, OfflineFindingPublicKey,
+    protocol::{BleAdvertisementMetadata, OfflineFindingPublicKey},
 };
 
 pub struct TwoPartyChannel {
