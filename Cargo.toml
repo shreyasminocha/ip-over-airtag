@@ -6,7 +6,8 @@ edition = "2021"
 [dependencies]
 anyhow = "1.0.97"
 hex = "0.4.3"
-offline-finding = { workspace = true }
+offline-finding = { path = "../needle/offline_finding", features = [
+] }
 p224 = "0.13.2"
 rand = "0.8.5"
 sha2 = "0.10.8"
