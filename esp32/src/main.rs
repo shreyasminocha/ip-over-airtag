@@ -3,8 +3,9 @@ mod esp32_wifi;
 
 use embedded_svc::http::client::Client as HttpClient;
 use esp_idf_svc::{
+    bt::{Ble, BtDriver},
     eventloop::EspSystemEventLoop,
-    hal::prelude::Peripherals,
+    hal::{modem::BluetoothModem, prelude::Peripherals},
     http::client::{Configuration as HttpConfiguration, EspHttpConnection},
     nvs::EspDefaultNvsPartition,
     wifi::{BlockingWifi, EspWifi},
@@ -30,9 +31,11 @@ fn main() -> anyhow::Result<()> {
     let nvs = EspDefaultNvsPartition::take()?;
 
     let mut wifi = BlockingWifi::wrap(
-        EspWifi::new(peripherals.modem, sys_loop.clone(), Some(nvs))?,
+        EspWifi::new(peripherals.modem, sys_loop.clone(), Some(nvs.clone()))?,
         sys_loop,
     )?;
+
+    let bt = BtDriver::<Ble>::new(unsafe { BluetoothModem::new() }, Some(nvs.clone()))?;
 
     esp32_wifi::connect_wifi(SSID, PASSWORD, &mut wifi)?;
 

@@ -11,7 +11,7 @@ harness = false # do not use the built in cargo test harness -> resolve rust-ana
 
 [dependencies]
 log = "0.4"
-esp-idf-svc = { version = "0.51", features = ["critical-section", "embassy-time-driver", "embassy-sync", "experimental"] }
+esp-idf-svc = { git = "https://github.com/esp-rs/esp-idf-svc.git", features = ["critical-section", "embassy-time-driver", "embassy-sync", "experimental", "alloc"] }
 anyhow = "1.0.97"
 embedded-svc = "0.28.1"
 http = "1.3.1"
