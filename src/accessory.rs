@@ -142,10 +142,18 @@ fn perform_non_interactive_key_exchange(
     our_private_key: &SecretKey,
     their_public_key: &PublicKey,
 ) -> [u8; 32] {
+    let our_public_key_serialized = our_private_key.public_key().to_sec1_bytes().to_vec();
+    let their_public_key_serialized = their_public_key.to_sec1_bytes().to_vec();
+
     let data = [
-        our_private_key.public_key().to_sec1_bytes().to_vec(),
-        their_public_key.to_sec1_bytes().to_vec(),
-        dh_key_exchange(our_private_key, their_public_key),
+        // the order of the hashed data needs to be consistent from both POVs
+        (&our_public_key_serialized)
+            .min(&their_public_key_serialized)
+            .as_slice(),
+        (&our_public_key_serialized)
+            .max(&their_public_key_serialized)
+            .as_slice(),
+        dh_key_exchange(our_private_key, their_public_key).as_slice(),
     ]
     .concat();
     Sha256::digest(&data).into()
@@ -160,4 +168,68 @@ fn dh_key_exchange(our_private_key: &SecretKey, their_public_key: &PublicKey) ->
     let product = their_public_projective.mul(our_private_scalar);
 
     product.to_bytes().to_vec()
+}
+
+#[cfg(test)]
+mod tests {
+    use rand::rngs;
+
+    use super::*;
+
+    #[test]
+    fn test_alice_and_bob_have_same_view_of_each_others_channel_public_keys() {
+        let mut rng = rngs::OsRng;
+
+        let alice_secret_key = SecretKey::random(&mut rng);
+        let bob_secret_key = SecretKey::random(&mut rng);
+
+        let alice_two_party_channel = TwoPartyChannel::from_identity_keys(
+            alice_secret_key.clone(),
+            bob_secret_key.public_key(),
+        );
+        let bob_two_party_channel =
+            TwoPartyChannel::from_identity_keys(bob_secret_key, alice_secret_key.public_key());
+
+        assert_eq!(
+            alice_two_party_channel.our_channel_private_key.public_key(),
+            bob_two_party_channel.their_channel_public_key
+        );
+
+        assert_eq!(
+            bob_two_party_channel.our_channel_private_key.public_key(),
+            alice_two_party_channel.their_channel_public_key
+        );
+    }
+
+    #[test]
+    fn test_alice_and_bob_have_same_view_of_each_others_ephemeral_public_keys() {
+        let mut rng = rngs::OsRng;
+
+        let alice_secret_key = SecretKey::random(&mut rng);
+        let bob_secret_key = SecretKey::random(&mut rng);
+
+        let alice_two_party_channel = TwoPartyChannel::from_identity_keys(
+            alice_secret_key.clone(),
+            bob_secret_key.public_key(),
+        );
+        let bob_two_party_channel =
+            TwoPartyChannel::from_identity_keys(bob_secret_key, alice_secret_key.public_key());
+
+        for (p_two_party_channel, q_two_party_channel) in [
+            (&alice_two_party_channel, &bob_two_party_channel),
+            (&bob_two_party_channel, &alice_two_party_channel),
+        ] {
+            p_two_party_channel
+                .iter_their_keys()
+                .zip(
+                    q_two_party_channel
+                        .iter_our_keys()
+                        .map(|(_, public_key)| public_key),
+                )
+                .take(5) // trust
+                .for_each(|(p_pov_q_public_key, q_public_key)| {
+                    assert_eq!(p_pov_q_public_key, q_public_key);
+                });
+        }
+    }
 }
