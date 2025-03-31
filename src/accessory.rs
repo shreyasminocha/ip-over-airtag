@@ -5,35 +5,84 @@ use sha2::{Digest, Sha256};
 use offline_finding::{
     accessory::Accessory,
     p224::{
-        elliptic_curve::ScalarPrimitive,
-        elliptic_curve::{group::GroupEncoding, rand_core::CryptoRngCore},
+        elliptic_curve::{group::GroupEncoding, ScalarPrimitive},
         PublicKey, Scalar, SecretKey,
     },
     protocol::{BleAdvertisementMetadata, OfflineFindingPublicKey},
 };
 
 pub struct TwoPartyChannel {
-    #[allow(dead_code)]
     our_channel_private_key: SecretKey,
-    #[allow(dead_code)]
     their_channel_public_key: PublicKey,
     our_current_private_key: SecretKey,
     their_current_public_key: PublicKey,
 }
 
-impl Accessory for TwoPartyChannel {
-    /// This implementation is a bit of a formality, since we'll usually be constructing with
-    /// [`Self::new`].
-    fn random(csprng: &mut impl CryptoRngCore) -> Self
-    where
-        Self: Sized,
-    {
-        Self {
-            our_channel_private_key: SecretKey::random(csprng),
-            their_channel_public_key: SecretKey::random(csprng).public_key(),
-            our_current_private_key: SecretKey::random(csprng),
-            their_current_public_key: SecretKey::random(csprng).public_key(),
+impl TwoPartyChannel {
+    pub fn generate_ad_to_transmit_data(
+        their_current_public_key: OfflineFindingPublicKey,
+        data: &u8,
+    ) -> [u8; 29] {
+        their_current_public_key.to_ble_advertisement_data(BleAdvertisementMetadata {
+            status: *data,
+            ..Default::default()
+        })
+    }
+
+    pub fn from_identity_keys(
+        our_identity_private_key: SecretKey,
+        their_identity_public_key: PublicKey,
+    ) -> Self {
+        let shared_scalar =
+            compute_shared_scalar(&our_identity_private_key, &their_identity_public_key);
+
+        let our_private_scalar = Scalar::from(our_identity_private_key.as_scalar_primitive());
+        // TODO: verify that this isn't broken
+        let our_channel_private_key = SecretKey::new((shared_scalar * our_private_scalar).into());
+
+        let their_channel_public_point =
+            their_identity_public_key.to_projective().mul(shared_scalar);
+        let their_channel_public_key =
+            PublicKey::from_affine(their_channel_public_point.to_affine()).unwrap();
+
+        Self::from_channel_keys(our_channel_private_key, their_channel_public_key)
+    }
+
+    pub fn from_channel_keys(
+        our_channel_private_key: SecretKey,
+        their_channel_public_key: PublicKey,
+    ) -> Self {
+        let mut channel = Self {
+            our_channel_private_key: our_channel_private_key.clone(),
+            their_channel_public_key,
+            our_current_private_key: our_channel_private_key, // temporary, must match channel keys
+            their_current_public_key: their_channel_public_key, // temporary, must match channel keys
+        };
+
+        // important: generate initial ephemeral keys
+        channel.rotate_keys();
+
+        channel
+    }
+
+    pub fn iter_their_keys(&self) -> impl Iterator<Item = OfflineFindingPublicKey> {
+        struct TheirKeysIterator(TwoPartyChannel);
+
+        impl Iterator for TheirKeysIterator {
+            type Item = OfflineFindingPublicKey;
+
+            fn next(&mut self) -> Option<Self::Item> {
+                let item = (&self.0.their_current_public_key).into();
+                self.0.rotate_keys();
+
+                Some(item)
+            }
         }
+
+        TheirKeysIterator(TwoPartyChannel::from_channel_keys(
+            self.our_channel_private_key.clone(),
+            self.their_channel_public_key,
+        ))
     }
 
     fn rotate_keys(&mut self) {
@@ -55,47 +104,30 @@ impl Accessory for TwoPartyChannel {
         self.our_current_private_key = our_new_private_key;
         self.their_current_public_key = their_new_public_key;
     }
-
-    fn get_current_public_key(&self) -> OfflineFindingPublicKey {
-        (&self.our_current_private_key.public_key()).into()
-    }
 }
 
-impl TwoPartyChannel {
-    pub fn new(our_master_private_key: SecretKey, their_master_public_key: PublicKey) -> Self {
-        let shared_scalar =
-            compute_shared_scalar(&our_master_private_key, &their_master_public_key);
+impl Accessory for TwoPartyChannel {
+    fn iter_our_keys(&self) -> impl Iterator<Item = (SecretKey, OfflineFindingPublicKey)> {
+        struct OurKeysIterator(TwoPartyChannel);
 
-        let our_private_scalar = Scalar::from(our_master_private_key.as_scalar_primitive());
-        // TODO: verify that this isn't broken
-        let channel_our_private_key = SecretKey::new((shared_scalar * our_private_scalar).into());
+        impl Iterator for OurKeysIterator {
+            type Item = (SecretKey, OfflineFindingPublicKey);
 
-        let channel_their_public_point = their_master_public_key.to_projective().mul(shared_scalar);
-        let channel_their_public_key =
-            PublicKey::from_affine(channel_their_public_point.to_affine()).unwrap();
+            fn next(&mut self) -> Option<Self::Item> {
+                let item = (
+                    self.0.our_current_private_key.clone(),
+                    (&self.0.our_current_private_key.public_key()).into(),
+                );
+                self.0.rotate_keys();
 
-        let mut channel = Self {
-            our_channel_private_key: channel_our_private_key.clone(),
-            their_channel_public_key: channel_their_public_key,
-            our_current_private_key: channel_our_private_key, // temporary, must match channel keys
-            their_current_public_key: channel_their_public_key, // temporary, must match channel keys
-        };
+                Some(item)
+            }
+        }
 
-        // important: generate initial ephemeral keys
-        channel.rotate_keys();
-
-        channel
-    }
-
-    pub fn generate_ad_to_transmit_data(&mut self, data: &u8) -> [u8; 29] {
-        let ad_data = OfflineFindingPublicKey::from(&self.their_current_public_key)
-            .to_ble_advertisement_data(BleAdvertisementMetadata {
-                status: *data,
-                ..Default::default()
-            });
-        self.rotate_keys();
-
-        ad_data
+        OurKeysIterator(TwoPartyChannel::from_channel_keys(
+            self.our_channel_private_key.clone(),
+            self.their_channel_public_key,
+        ))
     }
 }
 
@@ -107,13 +139,13 @@ fn compute_shared_scalar(our_private_key: &SecretKey, their_public_key: &PublicK
 }
 
 fn perform_non_interactive_key_exchange(
-    master_private_key: &SecretKey,
-    their_master_public_key: &PublicKey,
+    our_private_key: &SecretKey,
+    their_public_key: &PublicKey,
 ) -> [u8; 32] {
     let data = [
-        master_private_key.public_key().to_sec1_bytes().to_vec(),
-        their_master_public_key.to_sec1_bytes().to_vec(),
-        dh_key_exchange(master_private_key, their_master_public_key),
+        our_private_key.public_key().to_sec1_bytes().to_vec(),
+        their_public_key.to_sec1_bytes().to_vec(),
+        dh_key_exchange(our_private_key, their_public_key),
     ]
     .concat();
     Sha256::digest(&data).into()
