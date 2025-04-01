@@ -29,7 +29,7 @@ async fn main() -> Result<()> {
 
     println!("[alice] send bluetooth advertisements:");
     alice_sender
-        .transmit(data, bob_public_key, |ad_data, bt_address| {
+        .transmit(data, bob_public_key, async |ad_data, bt_address| {
             println!(
                 "- {} (as {})",
                 hex::encode(ad_data),
