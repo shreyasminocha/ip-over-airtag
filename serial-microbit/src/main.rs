@@ -36,6 +36,8 @@ async fn main(spawner: Spawner) {
         unsafe { HEAP.init(&raw mut HEAP_MEM as usize, HEAP_SIZE) }
     }
 
+    info!("hello");
+
     let mut config = embassy_nrf::config::Config::default();
     config.time_interrupt_priority = interrupt::Priority::P2;
     let p = embassy_nrf::init(config);
@@ -80,7 +82,9 @@ async fn main(spawner: Spawner) {
     bind_interrupts!(struct Irqs {
        UARTE0_UART0 => uarte::InterruptHandler<peripherals::UARTE0>;
     });
+    info!("enable?");
     let sd = Softdevice::enable(&config);
+    info!("enabled!");
     unwrap!(spawner.spawn(softdevice_task(sd)));
 
     let mut config = uarte::Config::default();
@@ -95,7 +99,10 @@ async fn main(spawner: Spawner) {
 
         let adv_fut = broadcast_advertisement(sd, buf);
         let read_fut = uart.read(&mut buf);
-        select(adv_fut, read_fut).await;
+        match select(adv_fut, read_fut).await {
+            embassy_futures::select::Either::First(res) => unwrap!(res),
+            embassy_futures::select::Either::Second(_) => (),
+        }
 
         info!("returned from select");
     }
