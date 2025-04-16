@@ -95,7 +95,7 @@ async fn main(spawner: Spawner) {
     let mut buf = [0u8; 37];
     unwrap!(uart.read(&mut buf).await);
     loop {
-        info!("read new advertisement");
+        info!("read new advertisement: {:X}", &buf);
 
         let adv_fut = broadcast_advertisement(sd, buf);
         let read_fut = uart.read(&mut buf);

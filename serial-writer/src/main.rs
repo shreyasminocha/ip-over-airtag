@@ -1,10 +1,10 @@
-use std::time;
-
-use base64::{engine::general_purpose::STANDARD as b64, Engine as _};
+use base64::{prelude::BASE64_STANDARD, Engine};
 use color_eyre::{self, eyre::eyre};
 use offline_finding::protocol::{BleAdvertisementMetadata, OfflineFindingPublicKey};
-use p224::{PublicKey, SecretKey};
+use p224::{elliptic_curve::sec1::ToEncodedPoint, PublicKey, SecretKey};
 use rand::rngs::{self, OsRng};
+use std::{fs::File, io::Write, time::SystemTime};
+use tokio::time;
 use tracing::*;
 
 fn make_adv_data(key: &PublicKey) -> [u8; 37] {
@@ -15,9 +15,8 @@ fn make_adv_data(key: &PublicKey) -> [u8; 37] {
 
     let serial_data: [u8; 37] = [
         addr.as_slice(),
-        [30u8].as_slice(),
+        [30u8, 0xff].as_slice(),
         adv_data.as_slice(),
-        [0x00u8].as_slice(),
     ]
     .concat()
     .try_into()
@@ -44,9 +43,28 @@ async fn main() -> color_eyre::Result<()> {
 
     let mut rng = OsRng::default();
 
+    let mut output_file = File::create_new("output.csv")?;
+    writeln!(&mut output_file, "timestamp,key")?;
+
     loop {
         let key = SecretKey::random(&mut rng);
         let adv_data = make_adv_data(&key.public_key());
+
+        let unix_time = SystemTime::now()
+            .duration_since(SystemTime::UNIX_EPOCH)?
+            .as_secs();
+        writeln!(
+            &mut output_file,
+            "{},{}",
+            unix_time,
+            BASE64_STANDARD.encode(key.to_bytes())
+        )?;
         port.write_all(&adv_data)?;
+        info!(
+            "set new adv key: {:X?}",
+            key.public_key().to_encoded_point(true).as_bytes()
+        );
+
+        time::sleep(time::Duration::from_secs(60)).await;
     }
 }
